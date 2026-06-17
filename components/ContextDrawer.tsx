@@ -205,7 +205,7 @@ export default function ContextDrawer({
 function explainBlock(e: CalEventDTO): string {
   switch (e.type) {
     case "TASK_BLOCK":
-      return "A scheduled work block for this task. Removing just the block won't help — the AI re-adds it on the next plan. Delete the task to remove it for good.";
+      return "A scheduled work block for this task. The AI may move it on the next plan — lock it to pin it to this time. Removing just the block won't help (it's re-added); delete the task to remove it for good.";
     case "HABIT_BLOCK":
       return "A scheduled occurrence of this habit. It will be re-added on the next plan. Pause the habit to stop scheduling it (keeps the habit), or delete it entirely.";
     case "FOCUS":

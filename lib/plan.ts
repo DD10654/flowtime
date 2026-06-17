@@ -41,6 +41,50 @@ export async function runPlan(
   const isAway = (s: Date, e: Date) =>
     timeOffIntervals.some((t) => s < t.end && t.start < e);
 
+  // --- Auto-unlock a task's stranded final block ---
+  // A locked task block is user-pinned and normally survives replans. But when a
+  // task's *last* locked block has already ended and the task still isn't done,
+  // that pinned slot is stuck in the past. Unlock it so this run reschedules the
+  // unfinished work into the future instead of leaving it behind.
+  const lastLockedBlockByTask = new Map<string, (typeof events)[number]>();
+  for (const e of events) {
+    if (e.type !== "TASK_BLOCK" || !e.locked || !e.sourceTaskId) continue;
+    const cur = lastLockedBlockByTask.get(e.sourceTaskId);
+    if (!cur || e.end > cur.end) lastLockedBlockByTask.set(e.sourceTaskId, e);
+  }
+  const notDoneTaskIds = new Set(tasks.map((t) => t.id)); // `tasks` excludes done
+  const unlockBlockIds: string[] = [];
+  for (const [taskId, block] of lastLockedBlockByTask) {
+    if (notDoneTaskIds.has(taskId) && block.end <= now) {
+      unlockBlockIds.push(block.id);
+      block.locked = false; // reflect in memory so it's treated as regenerable below
+    }
+  }
+  if (unlockBlockIds.length > 0) {
+    await prisma.event.updateMany({
+      where: { id: { in: unlockBlockIds } },
+      data: { locked: false, state: "FREE" },
+    });
+  }
+
+  // Locked task blocks are user-pinned: keep them in place, reserve their time,
+  // and count their minutes against the task so the engine doesn't re-place them.
+  const lockedMinByTask = new Map<string, number>();
+  for (const e of events) {
+    if (
+      e.type === "TASK_BLOCK" &&
+      e.locked &&
+      e.sourceTaskId &&
+      !isAway(e.start, e.end) // blocks inside time-off are cleared & replanned
+    ) {
+      const mins = Math.round((e.end.getTime() - e.start.getTime()) / 60000);
+      lockedMinByTask.set(
+        e.sourceTaskId,
+        (lockedMinByTask.get(e.sourceTaskId) ?? 0) + mins,
+      );
+    }
+  }
+
   // Build per-series skip-date sets: deleted occurrences + manually-moved overrides.
   // Both the override's new position and its original position are skipped so
   // expandSeries doesn't regenerate a conflicting occurrence on either date.
@@ -74,7 +118,10 @@ export async function runPlan(
         (e) =>
           (!e.flexible || e.locked) &&
           (!e.sourceSeriesId || e.seriesOverride) &&
-          !["TASK_BLOCK", "HABIT_BLOCK", "FOCUS", "BUFFER"].includes(e.type),
+          // Auto-generated blocks are re-derived each plan — except locked task
+          // blocks, which the user pinned; those stay put as immovable.
+          (!["TASK_BLOCK", "HABIT_BLOCK", "FOCUS", "BUFFER"].includes(e.type) ||
+            (e.type === "TASK_BLOCK" && e.locked)),
       )
       .filter(
         (e) =>
@@ -108,20 +155,25 @@ export async function runPlan(
   // Overdue + unfinished tasks: drop the past deadline for this run so they
   // reschedule ASAP instead of being rejected (every future gap is past `due`).
   const rescheduledOverdueTaskIds: string[] = [];
-  const schedTasks: SchedTask[] = tasks.map((t) => {
+  const schedTasks: SchedTask[] = [];
+  for (const t of tasks) {
+    // Subtract minutes already pinned in locked blocks. A task fully covered by
+    // pinned blocks needs nothing more placed — skip it (it's still "scheduled").
+    const remainingDuration = t.durationMin - (lockedMinByTask.get(t.id) ?? 0);
+    if (remainingDuration <= 0) continue;
     const overdue = t.due !== null && t.due < now;
     if (overdue) rescheduledOverdueTaskIds.push(t.id);
-    return {
+    schedTasks.push({
       id: t.id,
       title: t.title,
-      durationMin: t.durationMin,
+      durationMin: remainingDuration,
       minChunkMin: t.minChunkMin,
       maxChunkMin: t.maxChunkMin,
       due: overdue ? null : t.due,
       priority: t.priority,
       dependsOnIds: t.dependsOn.map((d) => d.id),
-    };
-  });
+    });
+  }
 
   const schedHabits: SchedHabit[] = habits.map((h) => ({
     id: h.id,
@@ -145,15 +197,17 @@ export async function runPlan(
 
   // Wipe previously generated (flexible & unlocked) blocks, then write fresh.
   await prisma.$transaction(async (tx) => {
-    // Wipe all auto-generated block types (regardless of locked/flexible state)
-    // so each replan starts fresh. These types are never truly "pinned" — they're
-    // always re-derived from their sources. Locking them in place caused duplicate
-    // blocks to accumulate across replans (each run would add more alongside the
-    // locked ones).
+    // Wipe regenerable blocks so each replan starts fresh. Habit/focus/buffer are
+    // always re-derived from their sources. Task blocks are too — EXCEPT locked
+    // ones, which the user pinned: those are kept, reserved in `fixed`, and their
+    // minutes subtracted from the task above so we never double-schedule them.
     await tx.event.deleteMany({
       where: {
         userId,
-        type: { in: ["TASK_BLOCK", "HABIT_BLOCK", "FOCUS", "BUFFER"] },
+        OR: [
+          { type: { in: ["HABIT_BLOCK", "FOCUS", "BUFFER"] } },
+          { type: "TASK_BLOCK", locked: false },
+        ],
       },
     });
     // Clear focus/habit/task blocks (even locked) that fall in a time-off range.
@@ -207,11 +261,13 @@ export async function runPlan(
       });
     }
 
-    // Reflect scheduling status on tasks.
-    const scheduledTaskIds = new Set(
-      result.blocks.map((b) => b.sourceTaskId).filter(Boolean) as string[],
-    );
-    const allTaskIds = schedTasks.map((t) => t.id);
+    // Reflect scheduling status on tasks. A task counts as scheduled if it got a
+    // freshly placed block OR carries a pinned (locked) block from before.
+    const scheduledTaskIds = new Set<string>([
+      ...(result.blocks.map((b) => b.sourceTaskId).filter(Boolean) as string[]),
+      ...lockedMinByTask.keys(),
+    ]);
+    const allTaskIds = tasks.map((t) => t.id);
     await Promise.all(
       allTaskIds.map((id) =>
         tx.task.update({

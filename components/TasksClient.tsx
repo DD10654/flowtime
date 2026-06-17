@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Pencil, Trash2, Check, RotateCcw, Link2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Check, Link2 } from "lucide-react";
 import TaskForm from "./TaskForm";
 import { TaskDTO, dueLabel, prettyDuration } from "@/lib/ui";
 import { PRIORITY_COLORS } from "@/lib/types";
@@ -24,12 +24,9 @@ export default function TasksClient({ tasks }: { tasks: TaskDTO[] }) {
     router.refresh();
   }
 
-  async function toggleDone(t: TaskDTO) {
-    await fetch(`/api/tasks/${t.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: t.status === "done" ? "todo" : "done" }),
-    });
+  // Completing a task removes it entirely — completed tasks aren't kept around.
+  async function completeTask(t: TaskDTO) {
+    await fetch(`/api/tasks/${t.id}`, { method: "DELETE" });
     await afterChange();
   }
 
@@ -40,7 +37,6 @@ export default function TasksClient({ tasks }: { tasks: TaskDTO[] }) {
   }
 
   const active = tasks.filter((t) => t.status !== "done");
-  const done = tasks.filter((t) => t.status === "done");
 
   return (
     <div className="h-full overflow-y-auto">
@@ -77,29 +73,9 @@ export default function TasksClient({ tasks }: { tasks: TaskDTO[] }) {
               setFormOpen(true);
             }}
             onDelete={() => remove(t)}
-            onToggle={() => toggleDone(t)}
+            onComplete={() => completeTask(t)}
           />
         ))}
-
-        {done.length > 0 && (
-          <>
-            <h2 className="pt-6 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">
-              Completed
-            </h2>
-            {done.map((t) => (
-              <TaskRow
-                key={t.id}
-                task={t}
-                onEdit={() => {
-                  setEditing(t);
-                  setFormOpen(true);
-                }}
-                onDelete={() => remove(t)}
-                onToggle={() => toggleDone(t)}
-              />
-            ))}
-          </>
-        )}
       </div>
 
       {formOpen && (
@@ -120,30 +96,21 @@ function TaskRow({
   task,
   onEdit,
   onDelete,
-  onToggle,
+  onComplete,
 }: {
   task: TaskDTO;
   onEdit: () => void;
   onDelete: () => void;
-  onToggle: () => void;
+  onComplete: () => void;
 }) {
-  const done = task.status === "done";
   return (
-    <div
-      className={`group flex items-center gap-3 rounded-xl border border-[var(--border)] bg-white px-4 py-3 ${
-        done ? "opacity-60" : ""
-      }`}
-    >
+    <div className="group flex items-center gap-3 rounded-xl border border-[var(--border)] bg-white px-4 py-3">
       <button
-        onClick={onToggle}
-        title={done ? "Mark as not done" : "Mark done"}
-        className={`flex h-5 w-5 items-center justify-center rounded-full border ${
-          done
-            ? "bg-emerald-500 border-emerald-500 text-white"
-            : "border-gray-300 hover:border-[var(--primary)]"
-        }`}
+        onClick={onComplete}
+        title="Mark complete (removes the task)"
+        className="flex h-5 w-5 items-center justify-center rounded-full border border-gray-300 text-transparent hover:border-emerald-500 hover:bg-emerald-500 hover:text-white"
       >
-        {done ? <Check size={13} /> : <RotateCcw size={11} className="opacity-0" />}
+        <Check size={13} />
       </button>
 
       <span
@@ -152,9 +119,7 @@ function TaskRow({
       />
 
       <div className="flex-1 min-w-0">
-        <div className={`text-sm font-medium truncate ${done ? "line-through" : ""}`}>
-          {task.title}
-        </div>
+        <div className="text-sm font-medium truncate">{task.title}</div>
         <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
           <span
             className="font-medium"
