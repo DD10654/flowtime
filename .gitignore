@@ -1,0 +1,21 @@
+# Monorepo root ignores. The web app has its own web/.gitignore; the Android
+# app's build artifacts are covered here.
+
+# OS / editor
+.DS_Store
+.idea/
+*.iml
+.vscode/
+
+# Env (belt-and-suspenders; web/.gitignore also ignores its .env)
+.env
+.env*.local
+
+# Android / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.kotlin/
+android/captures/
+**/build/

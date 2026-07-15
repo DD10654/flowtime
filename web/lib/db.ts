@@ -1,5 +1,9 @@
 import { PrismaClient } from "@prisma/client";
-import { PrismaLibSQL } from "@prisma/adapter-libsql";
+// Use the HTTP-only ("/web") libSQL adapter — the default entry pulls in the
+// native @libsql/client, whose binary isn't traced into serverless bundles and
+// crashes at runtime on Vercel. The web client talks to Turso over HTTPS and
+// works both on Vercel's serverless runtime and locally on Node.
+import { PrismaLibSQL } from "@prisma/adapter-libsql/web";
 
 // Runtime is Turso (cloud libSQL) via the Prisma libSQL adapter. The datasource
 // `url` in schema.prisma (DATABASE_URL) is only used by the Prisma CLI; at
