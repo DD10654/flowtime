@@ -20,11 +20,11 @@ android {
 
     buildTypes {
         debug {
-            // Reaches the dev machine's localhost:3000. For a USB device run
-            // `adb reverse tcp:3000 tcp:3000`; for the emulator it also works via
-            // adb reverse (or use 10.0.2.2). Over Wi-Fi, use the host's LAN IP
-            // and start Next with `next dev -H 0.0.0.0`.
-            buildConfigField("String", "API_BASE_URL", "\"http://localhost:3000/\"")
+            // The deployed API — the app runs on any network, no laptop or tunnel.
+            // To develop against a local server instead, swap this to
+            // "http://localhost:3000/" and run `adb reverse tcp:3000 tcp:3000`
+            // (cleartext to localhost is allowed by res/xml/network_security_config.xml).
+            buildConfigField("String", "API_BASE_URL", "\"https://flowtime-app.vercel.app/\"")
         }
         release {
             isMinifyEnabled = false
@@ -32,7 +32,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            buildConfigField("String", "API_BASE_URL", "\"http://localhost:3000/\"")
+            buildConfigField("String", "API_BASE_URL", "\"https://flowtime-app.vercel.app/\"")
         }
     }
 
